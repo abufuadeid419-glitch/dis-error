@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 
 import { mutation, query } from "./_generated/server";
-import { AGENT, ANY_ORG, clean, cleanAll, docOrgUnique, geoFields, isAgent, newId, nextNo, nowIso, orgCustomer, require, round2 } from "./lib";
+import { AGENT, ANY_ORG, clean, cleanAll, docOrgUnique, geoFields, isAgent, newId, nextNo, nowIso, orgCustomer, orgMoney, require, round2, toBase } from "./lib";
 
 // GET /api/payment-vouchers (ANY_ORG; agents see only their own).
 export const list = query({
@@ -28,6 +28,7 @@ export const create = mutation({
     customer_id: v.string(),
     amount: v.number(),
     notes: v.optional(v.string()),
+    currency: v.optional(v.string()), // entry currency: "SYP" | "USD"
     lat: v.optional(v.union(v.number(), v.null())),
     lng: v.optional(v.union(v.number(), v.null())),
     client_created_at: v.optional(v.union(v.string(), v.null())),
@@ -40,9 +41,12 @@ export const create = mutation({
       if (ex) return clean(ex);
     }
     if (a.amount <= 0) throw new Error("المبلغ غير صالح");
+    const { rate, currency } = await orgMoney(ctx, user.org_id!);
+    const inputCur = a.currency === "USD" ? "USD" : "SYP";
+    const amountBase = toBase(a.amount, inputCur, rate);
     const credit = -(cust.balance ?? 0);
-    if (a.amount > credit + 0.001) throw new Error(`المبلغ أكبر من الرصيد الدائن للعميل (${round2(Math.max(credit, 0))})`);
-    await ctx.db.patch(cust._id, { balance: round2((cust.balance ?? 0) + a.amount) });
+    if (amountBase > credit + 0.001) throw new Error(`المبلغ أكبر من الرصيد الدائن للعميل (${round2(Math.max(credit, 0))})`);
+    await ctx.db.patch(cust._id, { balance: round2((cust.balance ?? 0) + amountBase) });
     const doc = {
       id: a.id || newId(),
       ...geoFields(a),
@@ -50,7 +54,11 @@ export const create = mutation({
       voucher_no: await nextNo(ctx, user.org_id!, "pay", "PAY"),
       customer_id: cust.id,
       customer_name: cust.name,
-      amount: a.amount,
+      amount: amountBase,
+      amount_input: round2(a.amount),
+      input_currency: inputCur,
+      exchange_rate: rate,
+      currency,
       notes: a.notes ?? "",
       distributor_id: user.user_id,
       distributor_name: user.name ?? null,

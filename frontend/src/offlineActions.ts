@@ -12,8 +12,9 @@ const geo = () => {
 };
 
 type Line = { product_id: string; product_name: string; quantity: number; price: number };
+type SaleLine = Line & { unit?: "PIECE" | "PACKAGE"; pieces?: number };
 
-export async function offlineSale(p: { customer: any; lines: Line[]; paid: number | null; notes: string; userName?: string; discountType?: "NONE" | "PERCENT" | "FIXED"; discountValue?: number }) {
+export async function offlineSale(p: { customer: any; lines: SaleLine[]; paid: number | null; notes: string; userName?: string; discountType?: "NONE" | "PERCENT" | "FIXED"; discountValue?: number }) {
   const id = uid();
   const items = p.lines.map((l) => ({ ...l, total: r2(l.quantity * l.price) }));
   const subtotal = r2(items.reduce((s, i) => s + i.total, 0));
@@ -23,7 +24,7 @@ export async function offlineSale(p: { customer: any; lines: Line[]; paid: numbe
   const total = r2(subtotal - discount);
   const paid = Math.min(p.paid ?? total, total);
   const remaining = r2(total - paid);
-  const body = { id, customer_id: p.customer.id, items: items.map(({ product_id, quantity, price }) => ({ product_id, quantity, price })), paid_amount: paid, notes: p.notes, discount_type: dt, discount_value: dv, ...geo() };
+  const body = { id, customer_id: p.customer.id, items: items.map(({ product_id, quantity, unit }) => ({ product_id, quantity, unit: unit ?? "PIECE" })), paid_amount: paid, notes: p.notes, discount_type: dt, discount_value: dv, ...geo() };
   const doc = {
     id, pending: true, invoice_no: tempNo("INV", id), customer_id: p.customer.id, customer_name: p.customer.name,
     distributor_name: p.userName, items, subtotal, discount_type: discount ? dt : "NONE", discount_value: discount ? dv : 0, discount_amount: discount, total, paid_amount: paid, remaining,
@@ -32,7 +33,7 @@ export async function offlineSale(p: { customer: any; lines: Line[]; paid: numbe
   await updateCached<any[]>("/my/inventory", (inv) =>
     inv.map((i) => {
       const l = p.lines.find((x) => x.product_id === i.product_id);
-      return l ? { ...i, quantity: r2(i.quantity - l.quantity) } : i;
+      return l ? { ...i, quantity: r2(i.quantity - (l.pieces ?? l.quantity)) } : i;
     }),
   );
   await updateCached<any[]>("/customers", (cs) => cs.map((c) => (c.id === p.customer.id ? { ...c, balance: r2(c.balance + remaining) } : c)));
@@ -41,13 +42,15 @@ export async function offlineSale(p: { customer: any; lines: Line[]; paid: numbe
   return doc;
 }
 
-export async function offlineCollection(p: { customer: any; amount: number; notes: string; userName?: string }) {
+export async function offlineCollection(p: { customer: any; amount: number; notes: string; userName?: string; currency?: "SYP" | "USD"; rate?: number }) {
   const id = uid();
-  const body = { id, customer_id: p.customer.id, amount: p.amount, notes: p.notes, ...geo() };
-  const doc = { id, pending: true, receipt_no: tempNo("RCV", id), customer_id: p.customer.id, customer_name: p.customer.name, amount: p.amount, notes: p.notes, collector_name: p.userName, created_at: new Date().toISOString() };
-  await updateCached<any[]>("/customers", (cs) => cs.map((c) => (c.id === p.customer.id ? { ...c, balance: r2(c.balance - p.amount) } : c)));
+  const cur = p.currency === "USD" ? "USD" : "SYP";
+  const base = cur === "USD" && (p.rate ?? 0) > 0 ? r2(p.amount * (p.rate as number)) : r2(p.amount);
+  const body = { id, customer_id: p.customer.id, amount: p.amount, currency: cur, notes: p.notes, ...geo() };
+  const doc = { id, pending: true, receipt_no: tempNo("RCV", id), customer_id: p.customer.id, customer_name: p.customer.name, amount: base, amount_input: r2(p.amount), input_currency: cur, exchange_rate: p.rate ?? 0, notes: p.notes, collector_name: p.userName, created_at: new Date().toISOString() };
+  await updateCached<any[]>("/customers", (cs) => cs.map((c) => (c.id === p.customer.id ? { ...c, balance: r2(c.balance - base) } : c)));
   await updateCached<any[]>("/collections", (s) => [doc, ...s]);
-  await enqueue({ id, path: "/collections", body, label: `تحصيل · ${p.customer.name} · ${p.amount}` });
+  await enqueue({ id, path: "/collections", body, label: `تحصيل · ${p.customer.name} · ${base}` });
   return doc;
 }
 
@@ -76,13 +79,15 @@ export async function offlineCustomer(p: { name: string; phone: string; address:
 }
 
 // Payment voucher (سند صرف): cash refund to a customer with a credit balance.
-export async function offlinePayment(p: { customer: any; amount: number; notes: string; userName?: string }) {
+export async function offlinePayment(p: { customer: any; amount: number; notes: string; userName?: string; currency?: "SYP" | "USD"; rate?: number }) {
   const id = uid();
-  const body = { id, customer_id: p.customer.id, amount: p.amount, notes: p.notes, ...geo() };
-  const doc = { id, pending: true, voucher_no: tempNo("PAY", id), customer_id: p.customer.id, customer_name: p.customer.name, amount: p.amount, notes: p.notes, distributor_name: p.userName, created_at: new Date().toISOString() };
-  await updateCached<any[]>("/customers", (cs) => cs.map((c) => (c.id === p.customer.id ? { ...c, balance: r2(c.balance + p.amount) } : c)));
+  const cur = p.currency === "USD" ? "USD" : "SYP";
+  const base = cur === "USD" && (p.rate ?? 0) > 0 ? r2(p.amount * (p.rate as number)) : r2(p.amount);
+  const body = { id, customer_id: p.customer.id, amount: p.amount, currency: cur, notes: p.notes, ...geo() };
+  const doc = { id, pending: true, voucher_no: tempNo("PAY", id), customer_id: p.customer.id, customer_name: p.customer.name, amount: base, amount_input: r2(p.amount), input_currency: cur, exchange_rate: p.rate ?? 0, notes: p.notes, distributor_name: p.userName, created_at: new Date().toISOString() };
+  await updateCached<any[]>("/customers", (cs) => cs.map((c) => (c.id === p.customer.id ? { ...c, balance: r2(c.balance + base) } : c)));
   await updateCached<any[]>("/payment-vouchers", (s) => [doc, ...s]);
-  await enqueue({ id, path: "/payment-vouchers", body, label: `سند صرف · ${p.customer.name} · ${p.amount}` });
+  await enqueue({ id, path: "/payment-vouchers", body, label: `سند صرف · ${p.customer.name} · ${base}` });
   return doc;
 }
 

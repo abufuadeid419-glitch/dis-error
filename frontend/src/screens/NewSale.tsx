@@ -10,11 +10,11 @@ import { SyncBanner } from "@/src/components/SyncBanner";
 import { useApi, useBottomChrome } from "@/src/hooks";
 import { useSyncState } from "@/src/offline";
 import { offlineSale } from "@/src/offlineActions";
-import { usePriceResolver } from "@/src/pricing";
+import { usePriceResolver, useExchangeRate, toBaseSyp } from "@/src/pricing";
 import { radius, spacing, useTheme } from "@/src/theme";
 import { Btn, Card, Empty, Field, Header, IconBtn, Loading, Segments, Select, T, useToast } from "@/src/ui";
 
-type Line = { product_id: string; name: string; available: number; quantity: string; price: string };
+type Line = { product_id: string; name: string; available: number; quantity: string; unit: "PIECE" | "PACKAGE"; price: string; ppp: number; currency: string; pieceLabel: string; packLabel: string };
 
 export default function NewSale() {
   const { colors } = useTheme();
@@ -31,9 +31,16 @@ export default function NewSale() {
   const { online } = useSyncState();
 
   const resolve = usePriceResolver();
-  const priceOf = (l: Line) => resolve(cust, l.product_id, +l.price);
+  const rate = useExchangeRate();
+  const curSym = (c: string) => (c === "USD" ? "$" : "ل.س");
+  const piecesNeeded = (l: Line) => (+l.quantity || 0) * (l.unit === "PACKAGE" ? l.ppp : 1);
+  // SYP price for one sold unit (piece or package) at the current rate.
+  const unitSyp = (l: Line) => {
+    const base = toBaseSyp(resolve(cust, l.product_id, +l.price), l.currency, rate);
+    return l.unit === "PACKAGE" ? Math.round(base * l.ppp * 100) / 100 : base;
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + (+l.quantity || 0) * priceOf(l), 0), [lines, cust, resolve]);
+  const subtotal = useMemo(() => lines.reduce((s, l) => s + (+l.quantity || 0) * unitSyp(l), 0), [lines, cust, resolve, rate]);
   const [dType, setDType] = useState<"NONE" | "PERCENT" | "FIXED">("NONE");
   const [dVal, setDVal] = useState("");
   const discount = dType === "PERCENT" ? (subtotal * Math.min(+dVal || 0, 100)) / 100 : dType === "FIXED" ? Math.min(+dVal || 0, subtotal) : 0;
@@ -42,20 +49,34 @@ export default function NewSale() {
 
   const addLine = (p: any) => {
     if (lines.find((l) => l.product_id === p.product_id)) return toast("المنتج مضاف مسبقاً", "error");
-    setLines([...lines, { product_id: p.product_id, name: p.product_name, available: p.quantity, quantity: "1", price: String(p.sale_price) }]);
+    setLines([
+      ...lines,
+      {
+        product_id: p.product_id,
+        name: p.product_name,
+        available: p.quantity,
+        quantity: "1",
+        unit: "PIECE",
+        price: String(p.sale_price),
+        ppp: Math.max(1, Math.round(p.pieces_per_package ?? 1)),
+        currency: p.price_currency === "USD" ? "USD" : "SYP",
+        pieceLabel: p.unit || "قطعة",
+        packLabel: p.package_unit || "كرتونة",
+      },
+    ]);
   };
-  const upd = (i: number, k: "quantity", v: string) => setLines(lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const upd = (i: number, k: "quantity" | "unit", v: string) => setLines(lines.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
 
   const submit = async () => {
     if (!cust) return toast("اختر العميل", "error");
     if (!lines.length) return toast("أضف منتجاً واحداً على الأقل", "error");
-    const bad = lines.find((l) => !(+l.quantity > 0) || +l.quantity > l.available);
+    const bad = lines.find((l) => !(+l.quantity > 0) || piecesNeeded(l) > l.available + 0.0001);
     if (bad) return toast(`كمية غير صالحة: ${bad.name}`, "error");
     setSaving(true);
     try {
       const doc = await offlineSale({
         customer: cust,
-        lines: lines.map((l) => ({ product_id: l.product_id, product_name: l.name, quantity: +l.quantity, price: priceOf(l) })),
+        lines: lines.map((l) => ({ product_id: l.product_id, product_name: l.name, quantity: +l.quantity, unit: l.unit, pieces: piecesNeeded(l), price: unitSyp(l) })),
         paid: paid === "" ? null : +paid || 0,
         notes,
         userName: user?.name,
@@ -112,18 +133,31 @@ export default function NewSale() {
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <View style={{ flex: 1 }}>
                   <T v="label">{l.name}</T>
-                  <T v="caption">المتوفر: {money(l.available)}</T>
+                  <T v="caption">المتوفر: {money(l.available)} {l.pieceLabel}{l.ppp > 1 ? ` (${money(Math.floor(l.available / l.ppp))} ${l.packLabel})` : ""}</T>
                 </View>
                 <IconBtn testID={`remove-line-${i}`} icon="trash-outline" onPress={() => setLines(lines.filter((_, j) => j !== i))} />
               </View>
+              {l.ppp > 1 && (
+                <View style={{ marginHorizontal: -spacing.md }}>
+                  <Segments
+                    value={l.unit}
+                    onChange={(k) => upd(i, "unit", k)}
+                    options={[{ key: "PIECE", label: l.pieceLabel }, { key: "PACKAGE", label: `${l.packLabel} (${l.ppp})` }]}
+                  />
+                </View>
+              )}
               <View style={{ flexDirection: "row", gap: spacing.md }}>
-                <View style={{ flex: 1 }}><Field testID={`line-qty-input-${i}`} label="الكمية" keyboardType="decimal-pad" value={l.quantity} onChangeText={(v) => upd(i, "quantity", v)} /></View>
-                <View style={{ flex: 1, justifyContent: "flex-end", gap: 2, paddingBottom: spacing.sm }}><T v="caption">السعر {cust?.type_id ? "(حسب فئة العميل)" : ""}</T><T v="h2" testID={`line-price-${i}`}>{money(priceOf(l))}</T><T v="caption">المجموع: {money((+l.quantity || 0) * priceOf(l))}</T></View>
+                <View style={{ flex: 1 }}><Field testID={`line-qty-input-${i}`} label={`الكمية (${l.unit === "PACKAGE" ? l.packLabel : l.pieceLabel})`} keyboardType="decimal-pad" value={l.quantity} onChangeText={(v) => upd(i, "quantity", v)} /></View>
+                <View style={{ flex: 1, justifyContent: "flex-end", gap: 2, paddingBottom: spacing.sm }}>
+                  <T v="caption">السعر {cust?.type_id ? "(حسب فئة العميل)" : ""}{l.currency === "USD" ? " · مُحوّل من $" : ""}</T>
+                  <T v="h2" testID={`line-price-${i}`}>{money(unitSyp(l))} ل.س</T>
+                  <T v="caption">المجموع: {money((+l.quantity || 0) * unitSyp(l))} ل.س</T>
+                </View>
               </View>
             </View>
           ))}
           {!!inv.data?.length && (
-            <Select testID="add-line-select" label="إضافة منتج" placeholder="+ اختر منتجاً من مخزونك" value={null} options={inv.data.filter((p: any) => p.quantity > 0)} getLabel={(p: any) => p.product_name} getSub={(p: any) => `متوفر ${p.quantity} · ${money(resolve(cust, p.product_id, p.sale_price))}`} onSelect={addLine} />
+            <Select testID="add-line-select" label="إضافة منتج" placeholder="+ اختر منتجاً من مخزونك" value={null} options={inv.data.filter((p: any) => p.quantity > 0)} getLabel={(p: any) => p.product_name} getSub={(p: any) => `متوفر ${p.quantity} ${p.unit || "قطعة"} · ${money(toBaseSyp(resolve(cust, p.product_id, p.sale_price), p.price_currency, rate))} ل.س`} onSelect={addLine} />
           )}
         </View>
 

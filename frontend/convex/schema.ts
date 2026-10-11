@@ -117,6 +117,11 @@ export default defineSchema(
       sale_price: v.optional(v.number()),
       stock: v.optional(v.number()),
       min_stock: v.optional(v.number()),
+      // Dual unit + currency support.
+      price_currency: v.optional(v.string()), // "SYP" | "USD" — currency of sale_price/cost_price (piece)
+      pieces_per_package: v.optional(v.number()), // pieces inside one package/carton
+      package_unit: v.optional(v.string()), // label for the package unit (e.g. "كرتونة")
+      package_price: v.optional(v.number()), // optional cached package sale price (piece * ppp)
       created_at: v.optional(v.string()),
     })
       .index("by_biz_id", ["id"])
@@ -172,6 +177,9 @@ export default defineSchema(
       remaining: v.optional(v.number()),
       payment_type: v.optional(v.string()),
       notes: v.optional(v.string()),
+      // Historical currency snapshot — immutable once the invoice is created.
+      exchange_rate: v.optional(v.number()),
+      currency: v.optional(v.string()),
       lat: v.optional(v.union(v.number(), v.null())),
       lng: v.optional(v.union(v.number(), v.null())),
       client_created_at: v.optional(v.union(v.string(), v.null())),
@@ -191,6 +199,11 @@ export default defineSchema(
       customer_name: v.optional(v.string()),
       amount: v.optional(v.number()),
       notes: v.optional(v.string()),
+      // Historical currency snapshot.
+      exchange_rate: v.optional(v.number()),
+      currency: v.optional(v.string()),
+      amount_input: v.optional(v.number()),
+      input_currency: v.optional(v.string()),
       collector_id: v.optional(v.string()),
       collector_name: v.optional(v.union(v.string(), v.null())),
       lat: v.optional(v.union(v.number(), v.null())),
@@ -232,6 +245,11 @@ export default defineSchema(
       customer_name: v.optional(v.string()),
       amount: v.optional(v.number()),
       notes: v.optional(v.string()),
+      // Historical currency snapshot.
+      exchange_rate: v.optional(v.number()),
+      currency: v.optional(v.string()),
+      amount_input: v.optional(v.number()),
+      input_currency: v.optional(v.string()),
       distributor_id: v.optional(v.string()),
       distributor_name: v.optional(v.union(v.string(), v.null())),
       lat: v.optional(v.union(v.number(), v.null())),

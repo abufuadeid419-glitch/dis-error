@@ -59,7 +59,10 @@ export function VoucherSheet({ kind, doc, onClose }: { kind: VoucherKind; doc: a
               <>
                 <T v="h2">{doc.customer_name}</T>
                 <T v="caption">{kind === "collection" ? `المحصّل: ${doc.collector_name ?? "—"}` : `الموزع: ${doc.distributor_name ?? "—"}`} · {fmtDate(doc.created_at)}</T>
-                <T v="h2" color={kind === "collection" ? "success" : "warning"} testID="voucher-detail-amount">المبلغ: {money(doc.amount)}</T>
+                <T v="h2" color={kind === "collection" ? "success" : "warning"} testID="voucher-detail-amount">المبلغ: {money(doc.amount)} {doc.currency ?? "ل.س"}</T>
+                {doc.input_currency === "USD" && doc.amount_input > 0 && (
+                  <T v="caption" testID="voucher-detail-input">المبلغ المُدخل: {money(doc.amount_input)} $ · سعر الصرف {money(doc.exchange_rate)} ل.س</T>
+                )}
                 {customer && <T>رصيد العميل الحالي: {money(customer.balance)}</T>}
               </>
             )}

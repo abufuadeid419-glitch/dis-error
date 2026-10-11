@@ -28,9 +28,14 @@ export const create = mutation({
     sale_price: v.optional(v.number()),
     stock: v.optional(v.number()),
     min_stock: v.optional(v.number()),
+    price_currency: v.optional(v.string()),
+    pieces_per_package: v.optional(v.number()),
+    package_unit: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     const user = await require(ctx, a.token, OWNER);
+    const ppp = Math.max(1, Math.round(a.pieces_per_package ?? 1));
+    const salePiece = a.sale_price ?? 0;
     const doc = {
       id: newId(),
       org_id: user.org_id!,
@@ -38,9 +43,13 @@ export const create = mutation({
       category: a.category ?? "",
       unit: a.unit ?? "قطعة",
       cost_price: a.cost_price ?? 0,
-      sale_price: a.sale_price ?? 0,
+      sale_price: salePiece,
       stock: a.stock ?? 0,
       min_stock: a.min_stock ?? 0,
+      price_currency: a.price_currency === "USD" ? "USD" : "SYP",
+      pieces_per_package: ppp,
+      package_unit: a.package_unit ?? "كرتونة",
+      package_price: round2(salePiece * ppp),
       created_at: nowIso(),
     };
     await ctx.db.insert("products", doc);
@@ -61,6 +70,9 @@ export const update = mutation({
     sale_price: v.optional(v.number()),
     stock: v.optional(v.number()),
     min_stock: v.optional(v.number()),
+    price_currency: v.optional(v.string()),
+    pieces_per_package: v.optional(v.number()),
+    package_unit: v.optional(v.string()),
   },
   handler: async (ctx, a) => {
     const user = await require(ctx, a.token, OWNER);
@@ -70,14 +82,20 @@ export const update = mutation({
       .filter((q) => q.eq(q.field("org_id"), user.org_id!))
       .unique();
     if (!old) throw new Error("المنتج غير موجود");
+    const ppp = Math.max(1, Math.round(a.pieces_per_package ?? (old as any).pieces_per_package ?? 1));
+    const salePiece = a.sale_price ?? 0;
     const patch = {
       name: a.name,
       category: a.category ?? "",
       unit: a.unit ?? "قطعة",
       cost_price: a.cost_price ?? 0,
-      sale_price: a.sale_price ?? 0,
+      sale_price: salePiece,
       stock: a.stock ?? 0,
       min_stock: a.min_stock ?? 0,
+      price_currency: a.price_currency === "USD" ? "USD" : "SYP",
+      pieces_per_package: ppp,
+      package_unit: a.package_unit ?? (old as any).package_unit ?? "كرتونة",
+      package_price: round2(salePiece * ppp),
     };
     await ctx.db.patch(old._id, patch);
     if ((old.stock ?? 0) !== patch.stock)

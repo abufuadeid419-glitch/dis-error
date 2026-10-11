@@ -123,6 +123,16 @@ export async function docOrgUnique(ctx: QueryCtx, table: any, id: string, org_id
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// ---- currency helpers (base = org.currency, foreign = "USD" at org.exchange_rate) ----
+// exchange_rate = how many base (SYP) units per 1 USD.
+export async function orgMoney(ctx: QueryCtx, org_id: string) {
+  const org: any = await orgById(ctx, org_id);
+  return { rate: Number(org?.exchange_rate ?? 0), currency: org?.currency ?? "ل.س", alt_currency: org?.alt_currency ?? "" };
+}
+// Convert an amount priced in `cur` ("USD" | anything-else) into base SYP.
+export const toBase = (amount: number, cur: string | undefined | null, rate: number) =>
+  cur === "USD" && rate > 0 ? round2(amount * rate) : round2(amount);
+
 // ---- geo fields (mirror server.py geo(body)) ----
 export const geoFields = (a: any) => ({
   lat: a.lat ?? null,

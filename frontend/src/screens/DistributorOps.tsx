@@ -8,6 +8,7 @@ import { SyncBanner } from "@/src/components/SyncBanner";
 import { VoucherKind, VoucherSheet, wreturnStatus } from "@/src/components/VoucherSheet";
 import { useApi, useBottomChrome } from "@/src/hooks";
 import { offlineCollection, offlinePayment, offlineWarehouseReturn } from "@/src/offlineActions";
+import { useExchangeRate } from "@/src/pricing";
 import { InvoiceSheet, ReturnSheet } from "@/src/screens/Sales";
 import { spacing, useTheme } from "@/src/theme";
 import { Badge, Btn, Card, Empty, Field, Header, IconBtn, Loading, Row, Segments, Select, Sheet, T, useToast } from "@/src/ui";
@@ -18,21 +19,24 @@ const isToday = (s: string) => new Date(s).toDateString() === new Date().toDateS
 function NewReceiptSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const toast = useToast();
   const { user } = useAuth();
+  const rate = useExchangeRate();
   const customers = useApi<any[]>("/customers", visible);
   const debtors = (customers.data ?? []).filter((c) => c.balance > 0 && !c.pending);
   const [cust, setCust] = useState<any>(null);
   const [amount, setAmount] = useState("");
+  const [cur, setCur] = useState<"SYP" | "USD">("SYP");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const base = cur === "USD" && rate > 0 ? Math.round(+amount * rate * 100) / 100 : +amount || 0;
   const submit = async () => {
     if (!cust) return toast("اختر العميل", "error");
     if (!(+amount > 0)) return toast("أدخل مبلغاً صحيحاً", "error");
-    if (+amount > cust.balance + 0.001) return toast("المبلغ أكبر من دين العميل", "error");
+    if (base > cust.balance + 0.001) return toast("المبلغ أكبر من دين العميل", "error");
     setSaving(true);
     try {
-      await offlineCollection({ customer: cust, amount: +amount, notes, userName: user?.name });
+      await offlineCollection({ customer: cust, amount: +amount, notes, userName: user?.name, currency: cur, rate });
       toast("تم تسجيل سند القبض");
-      setCust(null); setAmount(""); setNotes("");
+      setCust(null); setAmount(""); setCur("SYP"); setNotes("");
       onClose();
     } finally {
       setSaving(false);
@@ -48,9 +52,15 @@ function NewReceiptSheet({ visible, onClose }: { visible: boolean; onClose: () =
         options={debtors}
         getLabel={(c: any) => c.name}
         getSub={(c: any) => `الدين: ${money(c.balance)}`}
-        onSelect={(c: any) => { setCust(c); setAmount(String(c.balance)); }}
+        onSelect={(c: any) => { setCust(c); setAmount(String(c.balance)); setCur("SYP"); }}
       />
-      <Field testID="receipt-amount-input" label="المبلغ المستلم" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+      {rate > 0 && (
+        <View style={{ marginHorizontal: -spacing.lg }}>
+          <Segments value={cur} onChange={(k) => setCur(k)} options={[{ key: "SYP", label: "ليرة سورية" }, { key: "USD", label: "دولار $" }]} />
+        </View>
+      )}
+      <Field testID="receipt-amount-input" label={`المبلغ المستلم (${cur === "USD" ? "$" : "ل.س"})`} keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+      {cur === "USD" && rate > 0 && <T v="caption" testID="receipt-converted">≈ {money(base)} ل.س (سعر الصرف {money(rate)})</T>}
       <Field testID="receipt-notes-input" label="ملاحظات" value={notes} onChangeText={setNotes} />
     </Sheet>
   );
@@ -59,22 +69,25 @@ function NewReceiptSheet({ visible, onClose }: { visible: boolean; onClose: () =
 function NewPaymentSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const toast = useToast();
   const { user } = useAuth();
+  const rate = useExchangeRate();
   const customers = useApi<any[]>("/customers", visible);
   const creditors = (customers.data ?? []).filter((c) => c.balance < 0 && !c.pending);
   const [cust, setCust] = useState<any>(null);
   const [amount, setAmount] = useState("");
+  const [cur, setCur] = useState<"SYP" | "USD">("SYP");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const base = cur === "USD" && rate > 0 ? Math.round(+amount * rate * 100) / 100 : +amount || 0;
   const submit = async () => {
     if (!cust) return toast("اختر العميل", "error");
     if (!(+amount > 0)) return toast("أدخل مبلغاً صحيحاً", "error");
-    if (+amount > -cust.balance + 0.001) return toast(`المبلغ أكبر من الرصيد الدائن للعميل (${money(-cust.balance)})`, "error");
+    if (base > -cust.balance + 0.001) return toast(`المبلغ أكبر من الرصيد الدائن للعميل (${money(-cust.balance)})`, "error");
     if (!notes.trim()) return toast("اكتب سبب رد المبلغ", "error");
     setSaving(true);
     try {
-      await offlinePayment({ customer: cust, amount: +amount, notes, userName: user?.name });
+      await offlinePayment({ customer: cust, amount: +amount, notes, userName: user?.name, currency: cur, rate });
       toast("تم تسجيل سند الصرف");
-      setCust(null); setAmount(""); setNotes("");
+      setCust(null); setAmount(""); setCur("SYP"); setNotes("");
       onClose();
     } finally {
       setSaving(false);
@@ -91,9 +104,15 @@ function NewPaymentSheet({ visible, onClose }: { visible: boolean; onClose: () =
         options={creditors}
         getLabel={(c: any) => c.name}
         getSub={(c: any) => `رصيد دائن: ${money(-c.balance)}`}
-        onSelect={(c: any) => { setCust(c); setAmount(String(-c.balance)); }}
+        onSelect={(c: any) => { setCust(c); setAmount(String(-c.balance)); setCur("SYP"); }}
       />
-      <Field testID="payment-amount-input" label="المبلغ المصروف" keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+      {rate > 0 && (
+        <View style={{ marginHorizontal: -spacing.lg }}>
+          <Segments value={cur} onChange={(k) => setCur(k)} options={[{ key: "SYP", label: "ليرة سورية" }, { key: "USD", label: "دولار $" }]} />
+        </View>
+      )}
+      <Field testID="payment-amount-input" label={`المبلغ المصروف (${cur === "USD" ? "$" : "ل.س"})`} keyboardType="decimal-pad" value={amount} onChangeText={setAmount} />
+      {cur === "USD" && rate > 0 && <T v="caption" testID="payment-converted">≈ {money(base)} ل.س (سعر الصرف {money(rate)})</T>}
       <Field testID="payment-notes-input" label="البيان (سبب الرد)" value={notes} onChangeText={setNotes} />
     </Sheet>
   );

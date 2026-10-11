@@ -124,7 +124,18 @@ export const myInventory = query({
     );
     return inv
       .filter((i) => prods.has(i.product_id))
-      .map((i) => ({ ...clean(i), sale_price: prods.get(i.product_id)!.sale_price, min_stock: prods.get(i.product_id)!.min_stock ?? 0 }));
+      .map((i) => {
+        const p: any = prods.get(i.product_id)!;
+        return {
+          ...clean(i),
+          sale_price: p.sale_price,
+          min_stock: p.min_stock ?? 0,
+          unit: p.unit ?? "قطعة",
+          package_unit: p.package_unit ?? "كرتونة",
+          pieces_per_package: Math.max(1, Math.round(p.pieces_per_package ?? 1)),
+          price_currency: p.price_currency === "USD" ? "USD" : "SYP",
+        };
+      });
   },
 });
 

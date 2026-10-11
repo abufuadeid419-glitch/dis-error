@@ -55,20 +55,24 @@ export function InvoiceSheet({ doc, onClose }: { doc: any | null; onClose: () =>
           </Card>
           {doc.items.map((it: any, i: number) => (
             <View key={i} style={{ flexDirection: "row", gap: spacing.sm }}>
-              <T style={{ flex: 1 }}>{it.product_name}</T>
+              <View style={{ flex: 1 }}>
+                <T>{it.product_name}</T>
+                {it.unit_label && <T v="caption">{money(it.quantity)} {it.unit_label}{it.unit === "PACKAGE" && it.pieces_per_package > 1 ? ` (${money(it.pieces)} قطعة)` : ""}{it.price_currency === "USD" ? " · سعّر بالدولار" : ""}</T>}
+              </View>
               <T v="caption">{money(it.quantity)} × {money(it.price)}</T>
               <T v="label">{money(it.total)}</T>
             </View>
           ))}
           <Card style={{ gap: spacing.xs }}>
             {doc.discount_amount > 0 && <T v="caption">المجموع قبل الخصم: {money(doc.subtotal)} · الخصم: {money(doc.discount_amount)}{doc.discount_type === "PERCENT" ? ` (${doc.discount_value}%)` : ""}</T>}
-            <T v="h2" testID="invoice-detail-total">الإجمالي: {money(doc.voided ? doc.orig_total : doc.total)}</T>
+            <T v="h2" testID="invoice-detail-total">الإجمالي: {money(doc.voided ? doc.orig_total : doc.total)} {doc.currency ?? "ل.س"}</T>
             {doc.paid_amount !== undefined && (
               <>
                 <T color="success">المدفوع: {money(doc.paid_amount)}</T>
                 <T color="warning">المتبقي: {money(doc.remaining)}</T>
               </>
             )}
+            {doc.exchange_rate > 0 && <T v="caption" testID="invoice-detail-rate">سعر الصرف المعتمد وقت الفاتورة: 1$ = {money(doc.exchange_rate)} ل.س</T>}
             {!!(doc.notes || doc.reason) && <T v="caption">{doc.notes || doc.reason}</T>}
           </Card>
           {doc.pending && <Badge text="بانتظار المزامنة" tone="warning" />}

@@ -12,8 +12,10 @@ import {
   nextNo,
   nowIso,
   orgCustomer,
+  orgMoney,
   require,
   round2,
+  toBase,
 } from "./lib";
 
 // GET /api/collections  (ANY_ORG; agents see only what they collected)
@@ -41,6 +43,7 @@ export const create = mutation({
     customer_id: v.string(),
     amount: v.number(),
     notes: v.optional(v.string()),
+    currency: v.optional(v.string()), // entry currency: "SYP" | "USD"
     lat: v.optional(v.union(v.number(), v.null())),
     lng: v.optional(v.union(v.number(), v.null())),
     client_created_at: v.optional(v.union(v.string(), v.null())),
@@ -53,9 +56,13 @@ export const create = mutation({
       if (ex) return clean(ex);
     }
     if (a.amount <= 0) throw new Error("المبلغ غير صالح");
-    if (a.amount > (cust.balance ?? 0) + 0.001) throw new Error("المبلغ أكبر من دين العميل");
+    // Convert the entered amount to base (SYP) at the current rate; stamp it historically.
+    const { rate, currency } = await orgMoney(ctx, user.org_id!);
+    const inputCur = a.currency === "USD" ? "USD" : "SYP";
+    const amountBase = toBase(a.amount, inputCur, rate);
+    if (amountBase > (cust.balance ?? 0) + 0.001) throw new Error("المبلغ أكبر من دين العميل");
 
-    await ctx.db.patch(cust._id, { balance: round2((cust.balance ?? 0) - a.amount) });
+    await ctx.db.patch(cust._id, { balance: round2((cust.balance ?? 0) - amountBase) });
     const doc = {
       id: a.id || newId(),
       ...geoFields(a),
@@ -63,7 +70,11 @@ export const create = mutation({
       receipt_no: await nextNo(ctx, user.org_id!, "col", "RCV"),
       customer_id: cust.id,
       customer_name: cust.name,
-      amount: a.amount,
+      amount: amountBase,
+      amount_input: round2(a.amount),
+      input_currency: inputCur,
+      exchange_rate: rate,
+      currency,
       notes: a.notes ?? "",
       collector_id: user.user_id,
       collector_name: user.name ?? null,

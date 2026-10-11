@@ -15,14 +15,17 @@ import {
   nextNo,
   nowIso,
   orgCustomer,
+  orgMoney,
   priceFor,
   require,
   round2,
+  toBase,
 } from "./lib";
 
 const lineItem = v.object({
   product_id: v.string(),
   quantity: v.number(),
+  unit: v.optional(v.string()), // "PIECE" | "PACKAGE"
   price: v.optional(v.number()),
 });
 
@@ -67,15 +70,38 @@ export const create = mutation({
     const cust = await orgCustomer(ctx, user, a.customer_id);
     if (!a.items.length) throw new Error("أضف منتجاً واحداً على الأقل");
 
+    const { rate, currency } = await orgMoney(ctx, user.org_id!);
+
     const items: any[] = [];
     let total = 0;
     for (const it of a.items) {
       const inv = await distInv(ctx, user.user_id, it.product_id);
-      if (!inv || inv.quantity < it.quantity) throw new Error(`الكمية غير متوفرة لديك: ${inv?.product_name ?? ""}`);
-      const price = await priceFor(ctx, user.org_id!, cust, it.product_id);
-      const line = round2(it.quantity * price);
+      const prod: any = await docOrgUnique(ctx, "products", it.product_id, user.org_id!);
+      const ppp = Math.max(1, Math.round(prod?.pieces_per_package ?? 1));
+      const isPackage = it.unit === "PACKAGE";
+      const pieces = round2(it.quantity * (isPackage ? ppp : 1)); // stock is counted in pieces
+      if (!inv || (inv.quantity ?? 0) < pieces - 0.0001) throw new Error(`الكمية غير متوفرة لديك: ${inv?.product_name ?? prod?.name ?? ""}`);
+      // Piece price in the product's own currency → base (SYP) at the CURRENT rate.
+      const cur = prod?.price_currency === "USD" ? "USD" : "SYP";
+      const piecePriceCur = await priceFor(ctx, user.org_id!, cust, it.product_id);
+      const piecePriceBase = toBase(piecePriceCur, cur, rate);
+      const unitPrice = isPackage ? round2(piecePriceBase * ppp) : piecePriceBase; // price per sold unit, in SYP
+      const line = round2(it.quantity * unitPrice);
       total += line;
-      items.push({ product_id: it.product_id, product_name: inv.product_name, quantity: it.quantity, price, total: line });
+      items.push({
+        product_id: it.product_id,
+        product_name: inv.product_name ?? prod?.name ?? "",
+        unit: isPackage ? "PACKAGE" : "PIECE",
+        unit_label: isPackage ? prod?.package_unit ?? "كرتونة" : prod?.unit ?? "قطعة",
+        quantity: it.quantity,
+        pieces_per_package: ppp,
+        pieces,
+        price_currency: cur,
+        orig_unit_price: isPackage ? round2(piecePriceCur * ppp) : piecePriceCur, // in product currency (historical reference)
+        price: unitPrice, // SYP (kept for back-compat with existing readers)
+        unit_price: unitPrice, // SYP
+        total: line,
+      });
     }
 
     const subtotal = round2(total);
@@ -87,8 +113,8 @@ export const create = mutation({
 
     for (const it of items) {
       const inv = await distInv(ctx, user.user_id, it.product_id);
-      if (inv) await ctx.db.patch(inv._id, { quantity: round2(inv.quantity - it.quantity) });
-      await logMovement(ctx, user.org_id!, it.product_id, it.product_name, "SALE", -it.quantity, user.name ?? null, "AGENT");
+      if (inv) await ctx.db.patch(inv._id, { quantity: round2((inv.quantity ?? 0) - it.pieces) });
+      await logMovement(ctx, user.org_id!, it.product_id, it.product_name, "SALE", -it.pieces, user.name ?? null, "AGENT");
     }
 
     await ctx.db.patch(cust._id, { balance: round2((cust.balance ?? 0) + round2(total - paid)) });
@@ -114,6 +140,8 @@ export const create = mutation({
       remaining: round2(total - paid),
       payment_type: paid >= total ? "CASH" : "CREDIT",
       notes: a.notes ?? "",
+      exchange_rate: rate,
+      currency,
       created_at: nowIso(),
     };
     await ctx.db.insert("sales", doc);
