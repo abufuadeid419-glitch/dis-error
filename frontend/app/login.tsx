@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth";
 import { KeyboardScreen } from "@/src/components/KeyboardScreen";
 import { DeviceConflictSheet } from "@/src/components/DeviceConflictSheet";
+import { isValidCallingCode } from "@/src/phone";
 import { fonts, makeStyles, radius, spacing, useTheme } from "@/src/theme";
 import { Btn, Field, Ionicons, T } from "@/src/ui";
 
@@ -94,10 +95,17 @@ function PhoneAuth() {
   }, [wait]);
 
   const ccDigits = cc.replace(/\D/g, "");
+  // Reject fake/unassigned country codes (e.g. "+123") up front so we never
+  // fire a request or waste an SMS on a number that can't exist.
+  const ccValid = isValidCallingCode(ccDigits);
   // Accept "0947…", "947…", "963947…" or "00963947…" in the local field.
   const localDigits = local.replace(/\D/g, "").replace(/^00/, "").replace(new RegExp(`^${ccDigits}(?=\\d{7,})`), "").replace(/^0+/, "");
   const phone = `+${ccDigits}${localDigits}`;
+  const localValid = localDigits.length >= 6;
   const send = async () => {
+    // Guard the resend path too (sentTo is already validated), but block the
+    // first send when the country code isn't real.
+    if (!sentTo && !ccValid) return;
     const ch = await requestOtp(sentTo ?? phone);
     if (ch) {
       setSentTo(sentTo ?? phone);
@@ -192,11 +200,14 @@ function PhoneAuth() {
             style={[inputStyle(colors), { flex: 1, textAlign: "left", writingDirection: "ltr" }]}
           />
         </View>
+        {ccDigits.length > 0 && !ccValid && (
+          <T testID="login-cc-error" v="caption" color="error">رمز الدولة غير صحيح، تحقق منه قبل الإرسال</T>
+        )}
       </View>
     </>,
     <>
       {err}
-      <Btn testID="login-send-code-button" title="إرسال رمز التحقق" icon="chatbubble-ellipses-outline" loading={busy} disabled={local.replace(/\D/g, "").length < 6} onPress={send} />
+      <Btn testID="login-send-code-button" title="إرسال رمز التحقق" icon="chatbubble-ellipses-outline" loading={busy} disabled={!ccValid || !localValid} onPress={send} />
       <T v="caption" style={{ textAlign: "center" }}>بالمتابعة أنت توافق على شروط الاستخدام وسياسة الخصوصية</T>
     </>,
   );
