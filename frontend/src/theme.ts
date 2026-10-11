@@ -30,8 +30,8 @@
 // Nothing else changes; the device setting takes over automatically.
 // Feel free to add as many new colors as you need to support the design guidelines.
 
-import { useMemo } from "react";
-import { Appearance, StyleSheet, useColorScheme } from "react-native";
+import { useMemo, useSyncExternalStore } from "react";
+import { Appearance, StyleSheet } from "react-native";
 
 import { storage } from "@/src/utils/storage";
 
@@ -82,44 +82,45 @@ const light = {
 export type ThemeColors = typeof light;
 
 const dark: ThemeColors = {
-  surface: "#0E1226",
-  onSurface: "#F5F5F5",
-  surfaceSecondary: "#171C36",
-  onSurfaceSecondary: "#E0E0E0",
-  surfaceTertiary: "#222846",
-  onSurfaceTertiary: "#D4D4D4",
-  surfaceInverse: "#F5F5F5",
-  onSurfaceInverse: "#0E1226",
-  brand: "#8EA2E8",
-  brandPrimary: "#8EA2E8",
-  onBrandPrimary: "#0B1024",
-  brandSecondary: "#2B3866",
-  onBrandSecondary: "#E8ECF7",
-  brandTertiary: "#1A2142",
-  onBrandTertiary: "#C9D2EC",
+  surface: "#0E1324",
+  onSurface: "#EEF1F8",
+  surfaceSecondary: "#171E35",
+  onSurfaceSecondary: "#C4CBDE",
+  surfaceTertiary: "#212A47",
+  onSurfaceTertiary: "#DCE2F0",
+  surfaceInverse: "#EEF1F8",
+  onSurfaceInverse: "#111522",
+  brand: "#4F5FB0",
+  brandPrimary: "#4F5FB0",
+  onBrandPrimary: "#FFFFFF",
+  brandSecondary: "#2A3566",
+  onBrandSecondary: "#DCE3F6",
+  brandTertiary: "#222B4E",
+  onBrandTertiary: "#AEBAE6",
   // Coral accent used for primary CTAs / FABs (see reference image).
-  accent: "#FF7A80",
-  onAccent: "#0B1024",
-  accentSoft: "#3A1F23",
-  onAccentSoft: "#FFB4B8",
-  success: "#81C784",
-  onSuccess: "#0E1226",
-  warning: "#FFB74D",
-  onWarning: "#0E1226",
-  error: "#EF8A8A",
-  onError: "#0E1226",
-  info: "#90A4AE",
-  onInfo: "#0E1226",
-  border: "#333333",
-  borderStrong: "#4F4F4F",
-  divider: "#2E2E2E",
-  muted: "#A1A1AA",
-  onBrand: "#0E1226",
+  accent: "#FF6B72",
+  onAccent: "#FFFFFF",
+  accentSoft: "#3A2026",
+  onAccentSoft: "#FF9FA4",
+  success: "#4CAF86",
+  onSuccess: "#06130D",
+  warning: "#E0A24A",
+  onWarning: "#1A1206",
+  error: "#E5737B",
+  onError: "#1A0608",
+  info: "#7E8CA8",
+  onInfo: "#0B0F1A",
+  border: "#2A3350",
+  borderStrong: "#3A4568",
+  divider: "#222A42",
+  muted: "#8B93AD",
+  onBrand: "#FFFFFF",
   overlay: "rgba(0,0,0,0.6)",
-  pro: "#FF7A80",
-  onPro: "#0E1226",
-  headerDeep: "#0A0F26",
-  onHeaderDeep: "#8792B4",
+  pro: "#FF6B72",
+  onPro: "#FFFFFF",
+  // Deep strip inside the indigo header (unselected tab track etc).
+  headerDeep: "#3A4584",
+  onHeaderDeep: "#C3CBE8",
 };
 
 export const defaultScheme = "light" satisfies ColorScheme;
@@ -129,30 +130,88 @@ export const themes: { light: ThemeColors; dark?: ThemeColors } = { light, dark 
 // User preference: "system" follows the device; persisted across launches.
 export type ThemePref = "system" | "light" | "dark";
 export const THEME_PREF_KEY = "theme_pref";
-export function applyThemePref(p: ThemePref) {
-  setColorScheme(p === "system" ? null : p);
+
+// ---------------------------------------------------------------------------
+// Reactive theme store.
+//
+// We do NOT drive the UI from React Native's `useColorScheme()` /
+// `Appearance.setColorScheme()`, because react-native-web does not implement
+// `setColorScheme`, so an in-app toggle never propagated there (and even on
+// native the override was not guaranteed to re-render instantly). Instead we
+// keep the preference in a tiny external store and subscribe every `useTheme()`
+// consumer with `useSyncExternalStore`, so flipping the theme updates the whole
+// app in real time on every platform.
+// ---------------------------------------------------------------------------
+
+let pref: ThemePref = "system";
+const listeners = new Set<() => void>();
+
+function systemScheme(): ColorScheme {
+  return Appearance.getColorScheme?.() === "dark" && themes.dark ? "dark" : "light";
 }
 
-// In-app theme toggle, only after `dark` exists in `themes`. Call
-// setColorScheme("dark"), setColorScheme("light"), or setColorScheme(null) to
-// follow the device. Every useTheme() consumer re-renders. Persisting the
-// choice and re-applying it on launch is the toggle's job.
+function resolve(): ColorScheme {
+  if ((pref === "light" || pref === "dark") && themes[pref]) return pref;
+  return systemScheme();
+}
+
+let current: ColorScheme = resolve();
+
+function recompute() {
+  const next = resolve();
+  current = next;
+  // Keep native chrome (status bar, pickers, alerts) in step where supported.
+  setColorScheme(pref === "system" ? null : next);
+  listeners.forEach((l) => l());
+}
+
+// When the user is on "system", follow live OS appearance changes.
+Appearance.addChangeListener?.(() => {
+  if (pref === "system") recompute();
+});
+
+export function applyThemePref(p: ThemePref) {
+  pref = p;
+  storage.setItem(THEME_PREF_KEY, p);
+  recompute();
+}
+
+export function getThemePref(): ThemePref {
+  return pref;
+}
+
+// In-app theme override. Call setColorScheme("dark" | "light") or null to follow
+// the device. Optional because react-native-web does not implement it; the
+// reactive store above is what actually re-themes the app.
 export function setColorScheme(scheme: ColorScheme | null) {
   // RN 0.86 re-reads the device scheme only for the literal "unspecified";
   // null would pin useColorScheme() to null and the app to light.
   Appearance.setColorScheme?.(scheme ?? "unspecified");
 }
 
-// Keep native surfaces (alerts, pickers, navigation chrome) on the schemes this
-// app ships: light only forces light; once `dark` exists the device decides.
-// Optional call because react-native-web does not implement it.
-setColorScheme?.(themes.dark ? null : defaultScheme);
-storage.getItem<ThemePref>(THEME_PREF_KEY, "system").then((p) => p && p !== "system" && applyThemePref(p));
+// Restore the saved preference on launch (then notify consumers).
+storage.getItem<ThemePref>(THEME_PREF_KEY, "system").then((p) => {
+  if (p && p !== pref) applyThemePref(p);
+});
+
+function subscribe(cb: () => void) {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+function getSnapshot(): ColorScheme {
+  return current;
+}
 
 export function useTheme(): { scheme: ColorScheme; colors: ThemeColors } {
-  const system = useColorScheme() as string | null | undefined;
-  const scheme: ColorScheme = system === "dark" && themes.dark ? "dark" : system === "light" ? "light" : defaultScheme;
+  const scheme = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { scheme, colors: themes[scheme] ?? themes.light };
+}
+
+// Subscribe to the current preference (for the appearance picker UI).
+export function useThemePref(): ThemePref {
+  return useSyncExternalStore(subscribe, getThemePref, getThemePref);
 }
 
 // Themed StyleSheet: returns a hook that builds the sheet from the active

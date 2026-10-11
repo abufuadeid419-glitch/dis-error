@@ -40,9 +40,9 @@ function Hero() {
         <Animated.View style={[styles.logo, fade]}>
           <Ionicons name="business" size={30} color={colors.onBrandPrimary} />
         </Animated.View>
-        <T v="display" color="onSurfaceInverse">النظام الذكي</T>
+        <T v="display" color="onBrandPrimary">النظام الذكي</T>
         <Animated.View style={fade}>
-          <T color="onSurfaceInverse" style={{ opacity: 0.9 }}>نظام متكامل لإدارة المبيعات والتوزيع</T>
+          <T color="onBrandPrimary" style={{ opacity: 0.9 }}>نظام متكامل لإدارة المبيعات والتوزيع</T>
         </Animated.View>
       </View>
     </Animated.View>

@@ -124,7 +124,7 @@ function QrScan({ onCode, onClose }: { onCode: (c: string) => void; onClose: () 
         onBarcodeScanned={({ data }) => { if (locked) return; setLocked(true); onCode(data); }}
       />
       <View style={{ position: "absolute", top: insets.top + spacing.lg, left: spacing.lg, right: spacing.lg }}>
-        <T color="onSurfaceInverse" style={{ textAlign: "center" }}>وجّه الكاميرا نحو رمز QR الخاص بالموظف</T>
+        <T color="onBrandPrimary" style={{ textAlign: "center" }}>وجّه الكاميرا نحو رمز QR الخاص بالموظف</T>
       </View>
       <View style={{ position: "absolute", bottom: insets.bottom + spacing.lg, left: spacing.lg, right: spacing.lg }}>
         <Btn testID="scan-cancel-button" variant="secondary" title="إلغاء" onPress={onClose} />
